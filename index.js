@@ -1,17 +1,37 @@
-const express = require('express')
-const app = express()
-const cors = require('cors')
+const express = require('express');
+const app = express();
+const bodyParser = require('body-parser');
+const cors = require('cors');
 const mongodb = require('mongodb');
 const superagent = require('superagent');
 
-/*
-    API COMMANDS
-	"/digital/13"     -> Read value of DIGITAL pin number 13
-	"/digital/13/1"   -> Write value on DIGITAL pin number 13 to HIGH
-	"/analog/2"      -> Read value of ANALOG pin number 2
-*/
+const port = parseInt(process.env.PORT, 10) || 8000;
 
-app.use(function(req, res, next) {
+/*----------------------------------------------------------------------
+API COMMANDS
+========================================================================
+"/digital/13"                   -> Read real value of DIGITAL pin number 13 (GET)
+"/digital/13/1"                 -> Write real value on DIGITAL pin number 13 to HIGH (POST)
+"/analog/2"                     -> Read real value of ANALOG pin number 2 (GET)
+/analog/history/wind            -> Read history values of wind
+/analog/history/temperature     -> Read history values of temperature
+/analog/history/humidity        -> Read history values of humidity
+"/function/wind"                -> Read value of WIND FUNCTION (GET)
+"/function/temperature"         -> Read value of WIND FUNCTION (GET)
+"/function/humidity"            -> Read value of WIND FUNCTION (GET)
+"/function"                     -> Write function values => ax^2+bx+c (POST)
+                                   BodyStructure:
+                                   type: wind || temperature || humidity
+                                   a: float
+                                   b: float
+                                   c: float
+----------------------------------------------------------------------*/
+
+// Parse application/json
+app.use(bodyParser.json())
+
+// CORS
+app.use((req, res, next) => {
   res.header("Access-Control-Allow-Origin", "*");
   res.header("Access-Control-Allow-Headers", "Origin, X-Requested-With, Content-Type, Accept");
   next();
@@ -22,97 +42,101 @@ const uri = 'mongodb://admin:sistemas1234@ds113566.mlab.com:13566/wstation';
 
 const IP = '192.168.0.88';
 
-let pin2 = 0;
-let pin3 = 0;
-let pin4 = 0;
-function query() {
-    let aux2 = 0;
-    let aux3 = 0;
-    let aux4 = 0;
-
-    superagent.get('http://192.168.0.88/a/2')
-    .end((err, res) => {
-        if (err) { return console.log(err); }
-        aux2 = res.body.value;
-
-        superagent.get('http://192.168.0.88/a/3')
-        .end((err, res) => {
-            if (err) { return console.log(err); }
-            aux3 = res.body.value;
-
-            superagent.get('http://192.168.0.88/a/4')
-            .end((err, res) => {
-                if (err) { return console.log(err); }
-                aux4 = res.body.value;
-
-                pin2 = aux2;
-                pin3 = aux3;
-                pin4 = aux4;
-
-                process.stdout.write(('000' + pin2).slice(-4) + '      ' + ('000' + pin3).slice(-4) + '      ' + ('000' + pin4).slice(-4) + '\r');
-
-                query();
-            });
-        });
-    });
-}
-
-//query();
-
 // Get value of analog pin
 app.route('/analog/:pin')
-    .get((req, res) => {
-        superagent.get(`http://192.168.0.88/a/${req.params.pin}`)
-        .end((s_err, s_res) => {
-            if (s_err) { return console.log(s_err); }
-            res.json(s_res.body.value);
-        });
-    })
+.get((req, res) => {
+    superagent.get(`http://192.168.0.88/a/${req.params.pin}`)
+    .end((s_err, s_res) => {
+        if (s_err) { return console.log(s_err); }
+        res.json(s_res.body.value);
+    });
+})
 
 // Get value of digital pin
 app.route('/digital/:pin')
-    .get((req, res) => {
-        superagent.get(`http://192.168.0.88/d/${req.params.pin}`)
-        .end((s_err, s_res) => {
-            if (s_err) { return console.log(s_err); }
-            res.json(s_res.body.value);
-        });
-    })
+.get((req, res) => {
+    superagent.get(`http://192.168.0.88/d/${req.params.pin}`)
+    .end((s_err, s_res) => {
+        if (s_err) { return console.log(s_err); }
+        res.json(s_res.body.value);
+    });
+})
 
 // Set value of digital pin
 app.route('/digital/:pin/:action')
-    .post((req, res) => {
-        superagent.get(`http://192.168.0.88/d/${req.params.pin}/${req.params.action}`)
-        .end((s_err, s_res) => {
-            if (s_err) { return console.log(s_err); }
-            res.json(s_res.body.value);
-        });
+.post((req, res) => {
+    superagent.get(`http://192.168.0.88/d/${req.params.pin}/${req.params.action}`)
+    .end((s_err, s_res) => {
+        if (s_err) { return console.log(s_err); }
+        res.json(s_res.body.value);
     });
+});
 
 // Get history of given pin name wind or humidity or temperature
 app.route('/analog/history/:pname')
-    .get((req, res) => {
-        mongodb.MongoClient.connect(uri, function(err, db) {
+.get((req, res) => {
+    mongodb.MongoClient.connect(uri, function(err, db) {
+        if(err) throw err;
+
+        const dbSelected = db.collection(req.params.pname);
+
+        dbSelected.find().sort({_id:-1}).limit(10).toArray(function (err, docs) {
             if(err) throw err;
 
-            const dbSelected = db.collection(req.params.pname);
+            db.close(function (err) {
+                if(err) throw err;
+            });
+            res.json(docs);
+        });
+    });
+})
 
-            dbSelected.find().sort({_id:-1}).limit(10).toArray(function (err, docs) {
+// Get function value of given type
+app.route('/function/:type')
+.get((req, res) => {
+    mongodb.MongoClient.connect(uri, function(err, db) {
+        if(err) throw err;
+
+        const type = req.params.type;
+
+        if (type === 'temperature' || type === 'wind' || type === 'humidity') {
+            const dbSelected = db.collection(`${type}_function`);
+
+            dbSelected.find().sort({_id:-1}).toArray(function (err, docs) {
                 if(err) throw err;
 
                 db.close(function (err) {
                     if(err) throw err;
                 });
-                res.json(docs);
+
+                res.json(docs[0] || null);
+            });
+        }
+    });
+})
+
+// Set value of function
+app.route('/function')
+.post((req, res) => {
+    const { type, a, b, c } = req.body;
+
+    if (type && a && b && c) {
+        mongodb.MongoClient.connect(uri, function(err, db) {
+            if(err) throw err;
+
+            const function_db = db.collection(`${type}_function`);
+
+            function_db.insert({a, b, c}, function(err, result) {
+                if(err) throw err;
             });
         });
-    })
+    }
+});
 
-app.listen(8000, function () {
-  console.log('App listening on port 8000!');
+app.listen(port, function () {
   console.log('Arduino Weather Station');
-  console.log('---------------------------------');
-  console.log('WIND      HUMI      TEMP');
+  console.log(`App listening on port ${port}`);
+  console.log('-----------------------------');
 })
 
 const dbStructure = {
@@ -137,6 +161,21 @@ const dbStructure = {
         time: '1511041260',
         value: '-15'
     }],
+    wind_function: {
+      a: 2,
+      b: -2,
+      c: 0
+    },
+    temperature_function: {
+      a: 1.5,
+      b: 0,
+      c: 3
+    },
+    humidity_function: {
+      a: 0,
+      b: 33,
+      c: 0
+    }
 }
 //
 // mongodb.MongoClient.connect(uri, function(err, db) {
