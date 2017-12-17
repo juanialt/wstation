@@ -61,6 +61,7 @@ API COMMANDS
                                     type: wind || temperature || humidity
                                     start: float
                                     end: float
+                                    active: 1 || 0
 ----------------------------------------------------------------------*/
 
 // Parse application/json
@@ -301,13 +302,13 @@ app.route('/threshold')
     mongodb.MongoClient.connect(uri, function(err, db) {
         if(err) throw err;
 
-        const { type, start, end } = req.body;
+        const { type, start, end, active } = req.body;
 
         if (type === 'temperature' || type === 'wind' || type === 'humidity') {
             const dbSelected = db.collection(`${type}_threshold`);
 
             dbSelected.remove();
-            dbSelected.insert({ start, end }, function(err, result) {
+            dbSelected.insert({ start, end, active }, function(err, result) {
                 if(err) throw err;
 
                 res.json(result);
