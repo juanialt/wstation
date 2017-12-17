@@ -4,8 +4,23 @@ const bodyParser = require('body-parser');
 const cors = require('cors');
 const mongodb = require('mongodb');
 const superagent = require('superagent');
+const nodemailer = require('nodemailer');
 
 const port = parseInt(process.env.PORT, 10) || 8000;
+const valueInterval = 10000;
+
+const emailConfig = require('./emailconfig.js');
+/*
+{
+    host: 'smtp.mail.yahoo.com',
+    port: 465,
+    secure: true,
+    auth: {
+        user: 'example@yahoo.com',
+        pass: 'password'
+    }
+}
+*/
 
 /*----------------------------------------------------------------------
 API COMMANDS
@@ -25,6 +40,21 @@ API COMMANDS
                                    a: float
                                    b: float
                                    c: float
+"/email"                        -> Read saved email value (GET)
+"/email/name@example.com"       -> Write new email value (POST)
+"/alarm"                        -> Read alarm value (GET)
+"/alarm"                        -> Write alarm value (POST)
+                                   BodyStructure:
+                                   start: {
+                                       hour: integer,
+                                       minutes: integer,
+                                       seconds: integer
+                                   }
+                                   end: {
+                                       hour: integer,
+                                       minutes: integer,
+                                       seconds: integer
+                                   }
 ----------------------------------------------------------------------*/
 
 // Parse application/json
@@ -39,8 +69,30 @@ app.use((req, res, next) => {
 
 // Standard URI format ==> mongodb://<dbuser>:<dbpassword>@ds113566.mlab.com:13566/wstation
 const uri = 'mongodb://admin:sistemas1234@ds113566.mlab.com:13566/wstation';
-
 const IP = '192.168.0.88';
+
+// create reusable transporter object using the default SMTP transport
+let transporter = nodemailer.createTransport(emailConfig);
+
+function sendArduinoDownEmail () {
+    // setup email data with unicode symbols
+    let mailOptions = {
+        from: emailConfig.from,
+        to: emailConfig.to,
+        subject: 'Weather Station - ERROR',
+        text: 'ERROR! El sistema no se encuentra activo',
+        html: '<b>Hello world?</b>'
+    };
+
+    // send mail with defined transport object
+    transporter.sendMail(mailOptions, (error, info) => {
+        if (error) {
+            return console.log(error);
+        }
+        console.log('Message sent: %s', info.messageId);
+    });
+}
+
 
 // Get value of analog pin
 app.route('/analog/:pin')
@@ -133,6 +185,82 @@ app.route('/function')
     }
 });
 
+// Get value of email for alerts
+app.route('/email')
+.get((req, res) => {
+    mongodb.MongoClient.connect(uri, function(err, db) {
+        if(err) throw err;
+
+        const dbEmail = db.collection('email');
+
+        dbEmail.find().toArray(function (err, docs) {
+            if(err) throw err;
+
+            db.close(function (err) {
+                if(err) throw err;
+            });
+
+            res.json(docs[0] || null);
+        });
+    });
+});
+
+// Set value of email for alerts
+app.route('/email/:email')
+.post((req, res) => {
+    mongodb.MongoClient.connect(uri, function(err, db) {
+        if(err) throw err;
+
+        const email = req.params.email;
+        const dbEmail = db.collection('email');
+
+        dbEmail.remove();
+        dbEmail.insert({email}, function(err, result) {
+            if(err) throw err;
+
+            res.json(result);
+        });
+    });
+});
+
+// Get value of alarm
+app.route('/alarm')
+.get((req, res) => {
+    mongodb.MongoClient.connect(uri, function(err, db) {
+        if(err) throw err;
+
+        const dbAlarm = db.collection('alarm');
+
+        dbAlarm.find().toArray(function (err, docs) {
+            if(err) throw err;
+
+            db.close(function (err) {
+                if(err) throw err;
+            });
+
+            res.json(docs[0] || null);
+        });
+    });
+});
+
+// Set value of alarm
+app.route('/alarm')
+.post((req, res) => {
+    mongodb.MongoClient.connect(uri, function(err, db) {
+        if(err) throw err;
+
+        const { start, end } = req.body;
+        const dbAlarm = db.collection('alarm');
+
+        dbAlarm.remove();
+        dbAlarm.insert({ start, end }, function(err, result) {
+            if(err) throw err;
+
+            res.json(result);
+        });
+    });
+});
+
 app.listen(port, function () {
   console.log('Arduino Weather Station');
   console.log(`App listening on port ${port}`);
@@ -177,44 +305,47 @@ const dbStructure = {
       c: 0
     }
 }
-//
-// mongodb.MongoClient.connect(uri, function(err, db) {
-//     if(err) throw err;
-//
-//     const wind_db = db.collection('wind');
-//     const humidity_db = db.collection('humidity');
-//     const temperature_db = db.collection('temperature');
-//
-//     setInterval(() => {
-//         superagent.get('http://192.168.0.88/all')
-//         .end((s_err, s_res) => {
-//             if (s_err) { return console.log(s_err); }
-//
-//             const time = new Date();
-//             const windData = {
-//                 value: s_res.body.value2,
-//                 time
-//             };
-//             const humidityData = {
-//                 value: s_res.body.value3,
-//                 time
-//             };
-//             const tempData = {
-//                 value: s_res.body.value4,
-//                 time
-//             };
-//
-//             wind_db.insert(windData, function(err, result) {
-//                 if(err) throw err;
-//             });
-//
-//             temperature_db.insert(tempData, function(err, result) {
-//                 if(err) throw err;
-//             });
-//
-//             humidity_db.insert(humidityData, function(err, result) {
-//                 if(err) throw err;
-//             });
-//         });
-//     }, 10000);
-// });
+
+mongodb.MongoClient.connect(uri, function(err, db) {
+    if(err) throw err;
+
+    const wind_db = db.collection('wind');
+    const humidity_db = db.collection('humidity');
+    const temperature_db = db.collection('temperature');
+
+    setInterval(() => {
+        superagent.get('http://192.168.0.88/all')
+        .end((s_err, s_res) => {
+            if (s_err) {
+              sendArduinoDownEmail();
+              return console.log(s_err);
+            }
+
+            const time = new Date();
+            const windData = {
+                value: s_res.body.value2,
+                time
+            };
+            const humidityData = {
+                value: s_res.body.value3,
+                time
+            };
+            const tempData = {
+                value: s_res.body.value4,
+                time
+            };
+
+            wind_db.insert(windData, function(err, result) {
+                if(err) throw err;
+            });
+
+            temperature_db.insert(tempData, function(err, result) {
+                if(err) throw err;
+            });
+
+            humidity_db.insert(humidityData, function(err, result) {
+                if(err) throw err;
+            });
+        });
+    }, valueInterval);
+});

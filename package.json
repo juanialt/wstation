@@ -22,6 +22,7 @@
     "cors": "^2.8.4",
     "express": "^4.16.2",
     "mongodb": "^2.2.33",
+    "nodemailer": "^4.4.1",
     "superagent": "^3.8.1"
   }
 }
