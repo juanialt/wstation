@@ -42,19 +42,25 @@ API COMMANDS
                                    c: float
 "/email"                        -> Read saved email value (GET)
 "/email/name@example.com"       -> Write new email value (POST)
-"/alarm"                        -> Read alarm value (GET)
-"/alarm"                        -> Write alarm value (POST)
-                                   BodyStructure:
-                                   start: {
-                                       hour: integer,
-                                       minutes: integer,
-                                       seconds: integer
-                                   }
-                                   end: {
-                                       hour: integer,
-                                       minutes: integer,
-                                       seconds: integer
-                                   }
+"/light"                        -> Read light value (GET)
+"/light"                        -> Write light value (POST)
+                                    BodyStructure:
+                                    start: {
+                                        hour: integer,
+                                        minutes: integer,
+                                        seconds: integer
+                                    }
+                                    end: {
+                                        hour: integer,
+                                        minutes: integer,
+                                        seconds: integer
+                                    }
+"/threshold/wind"               -> Read threshold value of wind (GET)
+"/threshold"                    -> Write threshold value of sensor (POST)
+                                    BodyStructure:
+                                    type: wind || temperature || humidity
+                                    start: float
+                                    end: float
 ----------------------------------------------------------------------*/
 
 // Parse application/json
@@ -70,6 +76,7 @@ app.use((req, res, next) => {
 // Standard URI format ==> mongodb://<dbuser>:<dbpassword>@ds113566.mlab.com:13566/wstation
 const uri = 'mongodb://admin:sistemas1234@ds113566.mlab.com:13566/wstation';
 const IP = '192.168.0.88';
+let downEmailSent = false;
 
 // create reusable transporter object using the default SMTP transport
 let transporter = nodemailer.createTransport(emailConfig);
@@ -81,7 +88,9 @@ function sendArduinoDownEmail () {
         to: emailConfig.to,
         subject: 'Weather Station - ERROR',
         text: 'ERROR! El sistema no se encuentra activo',
-        html: '<b>Hello world?</b>'
+        html: '<h1>Arduino Weather Station</h1>' +
+              '<h3>El sistema se encuentra caido</h3>' +
+              '<p>No se puede tener acceso al sistema Arduino del clima</p>'
     };
 
     // send mail with defined transport object
@@ -89,6 +98,7 @@ function sendArduinoDownEmail () {
         if (error) {
             return console.log(error);
         }
+        downEmailSent = true;
         console.log('Message sent: %s', info.messageId);
     });
 }
@@ -223,13 +233,13 @@ app.route('/email/:email')
     });
 });
 
-// Get value of alarm
-app.route('/alarm')
+// Get value of light threshold
+app.route('/light')
 .get((req, res) => {
     mongodb.MongoClient.connect(uri, function(err, db) {
         if(err) throw err;
 
-        const dbAlarm = db.collection('alarm');
+        const dbAlarm = db.collection('light');
 
         dbAlarm.find().toArray(function (err, docs) {
             if(err) throw err;
@@ -243,14 +253,14 @@ app.route('/alarm')
     });
 });
 
-// Set value of alarm
-app.route('/alarm')
+// Set value of light threshold
+app.route('/light')
 .post((req, res) => {
     mongodb.MongoClient.connect(uri, function(err, db) {
         if(err) throw err;
 
         const { start, end } = req.body;
-        const dbAlarm = db.collection('alarm');
+        const dbAlarm = db.collection('light');
 
         dbAlarm.remove();
         dbAlarm.insert({ start, end }, function(err, result) {
@@ -261,50 +271,56 @@ app.route('/alarm')
     });
 });
 
+// Get value of threshold sensor value
+app.route('/threshold/:type')
+.get((req, res) => {
+    mongodb.MongoClient.connect(uri, function(err, db) {
+        if(err) throw err;
+
+        const type = req.params.type;
+
+        if (type === 'temperature' || type === 'wind' || type === 'humidity') {
+            const dbSelected = db.collection(`${type}_threshold`);
+
+            dbSelected.find().sort({_id:-1}).toArray(function (err, docs) {
+                if(err) throw err;
+
+                db.close(function (err) {
+                    if(err) throw err;
+                });
+
+                res.json(docs[0] || null);
+            });
+        }
+    });
+});
+
+// Set value of threshold sensor value
+app.route('/threshold')
+.post((req, res) => {
+    mongodb.MongoClient.connect(uri, function(err, db) {
+        if(err) throw err;
+
+        const { type, start, end } = req.body;
+
+        if (type === 'temperature' || type === 'wind' || type === 'humidity') {
+            const dbSelected = db.collection(`${type}_threshold`);
+
+            dbSelected.remove();
+            dbSelected.insert({ start, end }, function(err, result) {
+                if(err) throw err;
+
+                res.json(result);
+            });
+        }
+    });
+});
+
 app.listen(port, function () {
   console.log('Arduino Weather Station');
   console.log(`App listening on port ${port}`);
   console.log('-----------------------------');
 })
-
-const dbStructure = {
-    wind: [{
-        time: '1511041213',
-        value: '50'
-    }, {
-        time: '1511041260',
-        value: '55'
-    }],
-    temperature: [{
-        time: '1511041213',
-        value: '-20'
-    }, {
-        time: '1511041260',
-        value: '-15'
-    }],
-    humidity: [{
-        time: '1511041213',
-        value: '-20'
-    }, {
-        time: '1511041260',
-        value: '-15'
-    }],
-    wind_function: {
-      a: 2,
-      b: -2,
-      c: 0
-    },
-    temperature_function: {
-      a: 1.5,
-      b: 0,
-      c: 3
-    },
-    humidity_function: {
-      a: 0,
-      b: 33,
-      c: 0
-    }
-}
 
 mongodb.MongoClient.connect(uri, function(err, db) {
     if(err) throw err;
@@ -317,9 +333,13 @@ mongodb.MongoClient.connect(uri, function(err, db) {
         superagent.get('http://192.168.0.88/all')
         .end((s_err, s_res) => {
             if (s_err) {
-              sendArduinoDownEmail();
-              return console.log(s_err);
+              if (downEmailSent === false) {
+                sendArduinoDownEmail();
+              }
+              return console.log('ERROR: Arduino disconnected.', s_err);
             }
+
+            downEmailSent = false;
 
             const time = new Date();
             const windData = {
