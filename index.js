@@ -78,6 +78,16 @@ app.use((req, res, next) => {
 const uri = 'mongodb://admin:sistemas1234@ds113566.mlab.com:13566/wstation';
 const IP = '192.168.0.88';
 let downEmailSent = false;
+let lightHours = null;
+let lightIsOn = false;
+
+let temperatureThreshold = null;
+let windThreshold = null;
+let humidityThreshold = null;
+
+let temperatureFunction = null;
+let windFunction = null;
+let humidityFunction = null;
 
 // create reusable transporter object using the default SMTP transport
 let transporter = nodemailer.createTransport(emailConfig);
@@ -97,13 +107,38 @@ function sendArduinoDownEmail () {
     // send mail with defined transport object
     transporter.sendMail(mailOptions, (error, info) => {
         if (error) {
-            return console.log(error);
+            return console.log(error, '--------------------------------');
         }
         downEmailSent = true;
         console.log('Message sent: %s', info.messageId);
+        console.log('--------------------------------');
     });
 }
 
+function sendThresholdAlertEmail (sensorName, start, end, current) {
+    // setup email data with unicode symbols
+    let mailOptions = {
+        from: emailConfig.from,
+        to: emailConfig.to,
+        subject: 'Weather Station - ERROR',
+        text: 'ERROR! Sensor fuera de rango',
+        html: '<h1>Arduino Weather Station</h1>' +
+              `<h3>El sensor de ${sensorName} se encuentra fuera de rango</h3>` +
+              `<p>El sensor de ${sensorName} esta fuera del rango establecido</p>` +
+              `<p>Valor actual ${current}` +
+              `<p>Rango de alerta entre ${start} y ${end}</p>`
+    };
+
+    // send mail with defined transport object
+    transporter.sendMail(mailOptions, (error, info) => {
+        if (error) {
+            return console.log(error, '--------------------------------');
+        }
+        downEmailSent = true;
+        console.log('Message sent: %s', info.messageId);
+        console.log('--------------------------------');
+    });
+}
 
 // Get value of analog pin
 app.route('/analog/:pin')
@@ -113,6 +148,59 @@ app.route('/analog/:pin')
         if (s_err) { return console.log(s_err); }
         res.json(s_res.body.value);
     });
+})
+
+// Get transformed value of analog type wind, temperature or humidity
+app.route('/analog/:type')
+.get((req, res) => {
+    const type = req.params.type;
+
+    if (type === 'temperature' && temperatureFunction) {
+        superagent.get('http://192.168.0.88/a/4')
+        .end((s_err, s_res) => {
+            if (s_err) { return console.log(s_err); }
+
+            const a = parseFloat(temperatureFunction.a.replace(',', '.'));
+            const b = parseFloat(temperatureFunction.b.replace(',', '.'));
+            const c = parseFloat(temperatureFunction.c.replace(',', '.'));
+            const value = parseInt(s_res.body.value);
+            const parsed = a * Math.pow(value, 2) + b * value + c;
+
+            res.json(parsed);
+        });
+    }
+
+    if (type === 'wind' && windFunction) {
+        superagent.get('http://192.168.0.88/a/2')
+        .end((s_err, s_res) => {
+            if (s_err) { return console.log(s_err); }
+
+            const a = parseFloat(temperatureFunction.a.replace(',', '.'));
+            const b = parseFloat(temperatureFunction.b.replace(',', '.'));
+            const c = parseFloat(temperatureFunction.c.replace(',', '.'));
+            const value = parseInt(s_res.body.value);
+            const parsed = a * Math.pow(value, 2) + b * value + c;
+
+            res.json(parsed);
+        });
+    }
+
+    if (type === 'humidity' && humidityFunction) {
+        superagent.get('http://192.168.0.88/a/3')
+        .end((s_err, s_res) => {
+            if (s_err) { return console.log(s_err); }
+
+            const a = parseFloat(temperatureFunction.a.replace(',', '.'));
+            const b = parseFloat(temperatureFunction.b.replace(',', '.'));
+            const c = parseFloat(temperatureFunction.c.replace(',', '.'));
+            const value = parseInt(s_res.body.value);
+            const parsed = a * Math.pow(value, 2) + b * value + c;
+
+            res.json(parsed);
+        });
+    }
+
+    return 0;
 })
 
 // Get value of digital pin
@@ -134,6 +222,22 @@ app.route('/digital/:pin/:action')
         res.json(s_res.body.value);
     });
 });
+
+function turnLightOn() {
+    superagent.get('http://192.168.0.88/d/6/1')
+    .end((s_err, s_res) => {
+        if (s_err) { return console.log(s_err); }
+        console.log('Ligth is turned ON');
+    });
+}
+
+function turnLightOff() {
+    superagent.get('http://192.168.0.88/d/6/0')
+    .end((s_err, s_res) => {
+        if (s_err) { return console.log(s_err); }
+        console.log('Ligth is turned OFF');
+    });
+}
 
 // Get history of given pin name wind or humidity or temperature
 app.route('/analog/history/:pname')
@@ -178,6 +282,32 @@ app.route('/function/:type')
     });
 })
 
+function getFunctionSensor(type) {
+    mongodb.MongoClient.connect(uri, function(err, db) {
+        if(err) throw err;
+
+        if (type === 'temperature' || type === 'wind' || type === 'humidity') {
+            const dbSelected = db.collection(`${type}_function`);
+
+            dbSelected.find().sort({_id:-1}).toArray(function (err, docs) {
+                if(err) throw err;
+
+                db.close(function (err) {
+                    if(err) throw err;
+                });
+
+                if (type === 'temperature') {
+                    temperatureFunction = docs[0];
+                } else if (type === 'wind') {
+                    windFunction = docs[0];
+                } else {
+                    humidityFunction = docs[0];
+                }
+            });
+        }
+    });
+}
+
 // Set value of function
 app.route('/function')
 .post((req, res) => {
@@ -189,6 +319,7 @@ app.route('/function')
 
             const function_db = db.collection(`${type}_function`);
 
+            function_db.remove();
             function_db.insert({a, b, c}, function(err, result) {
                 if(err) throw err;
             });
@@ -254,6 +385,24 @@ app.route('/light')
     });
 });
 
+function getLightHours() {
+    mongodb.MongoClient.connect(uri, function(err, db) {
+        if(err) throw err;
+
+        const dbAlarm = db.collection('light');
+
+        dbAlarm.find().toArray(function (err, docs) {
+            if(err) throw err;
+
+            db.close(function (err) {
+                if(err) throw err;
+            });
+
+            lightHours = docs[0];
+        });
+    });
+}
+
 // Set value of light threshold
 app.route('/light')
 .post((req, res) => {
@@ -296,6 +445,32 @@ app.route('/threshold/:type')
     });
 });
 
+function getThresholdSensor(type) {
+    mongodb.MongoClient.connect(uri, function(err, db) {
+        if(err) throw err;
+
+        if (type === 'temperature' || type === 'wind' || type === 'humidity') {
+            const dbSelected = db.collection(`${type}_threshold`);
+
+            dbSelected.find().sort({_id:-1}).toArray(function (err, docs) {
+                if(err) throw err;
+
+                db.close(function (err) {
+                    if(err) throw err;
+                });
+
+                if (type === 'temperature') {
+                    temperatureThreshold = docs[0];
+                } else if (type === 'wind') {
+                    windThreshold = docs[0];
+                } else {
+                    humidityThreshold = docs[0];
+                }
+            });
+        }
+    });
+}
+
 // Set value of threshold sensor value
 app.route('/threshold')
 .post((req, res) => {
@@ -330,6 +505,42 @@ mongodb.MongoClient.connect(uri, function(err, db) {
     const humidity_db = db.collection('humidity');
     const temperature_db = db.collection('temperature');
 
+    // Get DB light hours
+    setInterval(() => {
+        getLightHours();
+    }, 5000);
+    // Get DB Sensor threshold and functions
+    setInterval(() => {
+        getThresholdSensor('wind');
+        getThresholdSensor('humidity');
+        getThresholdSensor('temperature');
+
+        getFunctionSensor('wind');
+        getFunctionSensor('humidity');
+        getFunctionSensor('temperature');
+    }, 5000);
+
+    // Check if we need to turn the light on
+    setInterval(() => {
+        const currentTime = new Date();
+        const hours = currentTime.getHours();
+        const minutes = currentTime.getMinutes();
+
+        if (lightHours &&
+            lightHours.start.hours <= hours &&
+            lightHours.start.minutes <= minutes &&
+            lightHours.end.hours >= hours &&
+            lightHours.end.minutes >= minutes) {
+            if (!lightIsOn) {
+                turnLightOn();
+                lightIsOn = true;
+            }
+        } else if (lightIsOn){
+            turnLightOff();
+            lightIsOn = false;
+        }
+    }, 1000);
+
     setInterval(() => {
         superagent.get('http://192.168.0.88/all')
         .end((s_err, s_res) => {
@@ -337,7 +548,7 @@ mongodb.MongoClient.connect(uri, function(err, db) {
               if (downEmailSent === false) {
                 sendArduinoDownEmail();
               }
-              return console.log('ERROR: Arduino disconnected.', s_err);
+              return console.log('ERROR: Arduino disconnected.', s_err, '--------------------------------');
             }
 
             downEmailSent = false;
@@ -355,6 +566,60 @@ mongodb.MongoClient.connect(uri, function(err, db) {
                 value: s_res.body.value4,
                 time
             };
+
+            if (windThreshold && windFunction) {
+                const start = windThreshold.start;
+                const end = windThreshold.end;
+
+                const a = parseFloat(windFunction.a.replace(',', '.'));
+                const b = parseFloat(windFunction.b.replace(',', '.'));
+                const c = parseFloat(windFunction.c.replace(',', '.'));
+                const windValue = parseInt(windData.value);
+                const windParsed = a * Math.pow(windValue, 2) + b * windValue + c;
+
+                if (windParsed >= start && windParsed <= end) {
+                    console.log('WIND ALARM - The wind sensor is on ALERT range');
+                    console.log(`Current Value: ${windParsed}`);
+                    console.log(`Alarm Range: (START: ${start} // END: ${end})`);
+                    console.log('--------------------------------');
+                }
+            }
+
+            if (humidityThreshold && humidityFunction) {
+                const start = humidityThreshold.start;
+                const end = humidityThreshold.end;
+
+                const a = parseFloat(humidityFunction.a.replace(',', '.'));
+                const b = parseFloat(humidityFunction.b.replace(',', '.'));
+                const c = parseFloat(humidityFunction.c.replace(',', '.'));
+                const humidityValue = parseInt(humidityData.value);
+                const humidityParsed = a * Math.pow(humidityValue, 2) + b * humidityValue + c;
+
+                if (humidityParsed >= start && humidityParsed <= end) {
+                    console.log('HUMIDITY ALARM - The humidity sensor is on ALERT range');
+                    console.log(`Current Value: ${humidityParsed}`);
+                    console.log(`Alarm Range: (START: ${start} // END: ${end})`);
+                    console.log('--------------------------------');
+                }
+            }
+
+            if (temperatureThreshold && temperatureFunction) {
+                const start = temperatureThreshold.start;
+                const end = temperatureThreshold.end;
+
+                const a = parseFloat(String(temperatureFunction.a).replace(',', '.'));
+                const b = parseFloat(String(temperatureFunction.b).replace(',', '.'));
+                const c = parseFloat(String(temperatureFunction.c).replace(',', '.'));
+                const tempValue = parseInt(tempData.value);
+                const tempParsed = a * Math.pow(tempValue, 2) + b * tempValue + c;
+
+                if (tempParsed >= start && tempParsed <= end) {
+                    console.log('TEMPERATURE ALARM - The temperature sensor is on ALERT range');
+                    console.log(`Current Value: ${tempParsed}`);
+                    console.log(`Alarm Range: (START: ${start} // END: ${end})`);
+                    console.log('--------------------------------');
+                }
+            }
 
             wind_db.insert(windData, function(err, result) {
                 if(err) throw err;
