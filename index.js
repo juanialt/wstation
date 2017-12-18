@@ -151,7 +151,7 @@ app.route('/analog/:pin')
 })
 
 // Get transformed value of analog type wind, temperature or humidity
-app.route('/analog/:type')
+app.route('/analog/parsed/:type')
 .get((req, res) => {
     const type = req.params.type;
 
@@ -165,8 +165,14 @@ app.route('/analog/:type')
             const c = parseFloat(temperatureFunction.c.replace(',', '.'));
             const value = parseInt(s_res.body.value);
             const parsed = a * Math.pow(value, 2) + b * value + c;
+            const min = a * 0 + b * 0 + c;
+            const max = a * 1023 + b * 1023 + c;
 
-            res.json(parsed);
+            res.json({
+                value: parsed,
+                min,
+                max
+            });
         });
     }
 
@@ -175,13 +181,19 @@ app.route('/analog/:type')
         .end((s_err, s_res) => {
             if (s_err) { return console.log(s_err); }
 
-            const a = parseFloat(temperatureFunction.a.replace(',', '.'));
-            const b = parseFloat(temperatureFunction.b.replace(',', '.'));
-            const c = parseFloat(temperatureFunction.c.replace(',', '.'));
+            const a = parseFloat(windFunction.a.replace(',', '.'));
+            const b = parseFloat(windFunction.b.replace(',', '.'));
+            const c = parseFloat(windFunction.c.replace(',', '.'));
             const value = parseInt(s_res.body.value);
             const parsed = a * Math.pow(value, 2) + b * value + c;
+            const min = a * 0 + b * 0 + c;
+            const max = a * 1023 + b * 1023 + c;
 
-            res.json(parsed);
+            res.json({
+                value: parsed,
+                min,
+                max
+            });
         });
     }
 
@@ -190,13 +202,19 @@ app.route('/analog/:type')
         .end((s_err, s_res) => {
             if (s_err) { return console.log(s_err); }
 
-            const a = parseFloat(temperatureFunction.a.replace(',', '.'));
-            const b = parseFloat(temperatureFunction.b.replace(',', '.'));
-            const c = parseFloat(temperatureFunction.c.replace(',', '.'));
+            const a = parseFloat(humidityFunction.a.replace(',', '.'));
+            const b = parseFloat(humidityFunction.b.replace(',', '.'));
+            const c = parseFloat(humidityFunction.c.replace(',', '.'));
             const value = parseInt(s_res.body.value);
             const parsed = a * Math.pow(value, 2) + b * value + c;
+            const min = a * 0 + b * 0 + c;
+            const max = a * 1023 + b * 1023 + c;
 
-            res.json(parsed);
+            res.json({
+                value: parsed,
+                min,
+                max
+            });
         });
     }
 
