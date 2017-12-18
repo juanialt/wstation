@@ -89,6 +89,12 @@ let temperatureFunction = null;
 let windFunction = null;
 let humidityFunction = null;
 
+let humidityEmailCount = 0;
+let tempEmailCount = 0;
+let windEmailCount = 0;
+
+let alertEmail = null;
+
 // create reusable transporter object using the default SMTP transport
 let transporter = nodemailer.createTransport(emailConfig);
 
@@ -96,7 +102,7 @@ function sendArduinoDownEmail () {
     // setup email data with unicode symbols
     let mailOptions = {
         from: emailConfig.from,
-        to: emailConfig.to,
+        to: alertEmail || emailConfig.from,
         subject: 'Weather Station - ERROR',
         text: 'ERROR! El sistema no se encuentra activo',
         html: '<h1>Arduino Weather Station</h1>' +
@@ -119,7 +125,7 @@ function sendThresholdAlertEmail (sensorName, start, end, current) {
     // setup email data with unicode symbols
     let mailOptions = {
         from: emailConfig.from,
-        to: emailConfig.to,
+        to: alertEmail || emailConfig.from,
         subject: 'Weather Station - ERROR',
         text: 'ERROR! Sensor fuera de rango',
         html: '<h1>Arduino Weather Station</h1>' +
@@ -366,12 +372,12 @@ app.route('/email')
 });
 
 // Set value of email for alerts
-app.route('/email/:email')
+app.route('/email')
 .post((req, res) => {
     mongodb.MongoClient.connect(uri, function(err, db) {
         if(err) throw err;
 
-        const email = req.params.email;
+        const { email } = req.body;
         const dbEmail = db.collection('email');
 
         dbEmail.remove();
@@ -510,6 +516,24 @@ app.route('/threshold')
     });
 });
 
+function getEmail() {
+    mongodb.MongoClient.connect(uri, function(err, db) {
+        if(err) throw err;
+
+        const dbAlarm = db.collection('email');
+
+        dbAlarm.find().toArray(function (err, docs) {
+            if(err) throw err;
+
+            db.close(function (err) {
+                if(err) throw err;
+            });
+
+            alertEmail = docs[0].email;
+        });
+    });
+}
+
 app.listen(port, function () {
   console.log('Arduino Weather Station');
   console.log(`App listening on port ${port}`);
@@ -536,6 +560,10 @@ mongodb.MongoClient.connect(uri, function(err, db) {
         getFunctionSensor('wind');
         getFunctionSensor('humidity');
         getFunctionSensor('temperature');
+    }, 5000);
+    // Get DB Sensor threshold and functions
+    setInterval(() => {
+        getEmail();
     }, 5000);
 
     // Check if we need to turn the light on
@@ -577,7 +605,7 @@ mongodb.MongoClient.connect(uri, function(err, db) {
                 time
             };
             const humidityData = {
-                value: s_res.body.value3,
+                value: s_res.body.value,
                 time
             };
             const tempData = {
@@ -600,6 +628,12 @@ mongodb.MongoClient.connect(uri, function(err, db) {
                     console.log(`Current Value: ${windParsed}`);
                     console.log(`Alarm Range: (START: ${start} // END: ${end})`);
                     console.log('--------------------------------');
+                    if (windEmailCount <= 5) {
+                        sendThresholdAlertEmail ('Viento', start, end, windParsed);
+                        windEmailCount += 1;
+                    }
+                } else {
+                    windEmailCount = 0;
                 }
             }
 
@@ -618,6 +652,12 @@ mongodb.MongoClient.connect(uri, function(err, db) {
                     console.log(`Current Value: ${humidityParsed}`);
                     console.log(`Alarm Range: (START: ${start} // END: ${end})`);
                     console.log('--------------------------------');
+                    if (humidityEmailCount <= 5) {
+                        sendThresholdAlertEmail ('Humedad', start, end, humidityParsed);
+                        humidityEmailCount += 1;
+                    }
+                } else {
+                    humidityEmailCount = 0;
                 }
             }
 
@@ -636,6 +676,12 @@ mongodb.MongoClient.connect(uri, function(err, db) {
                     console.log(`Current Value: ${tempParsed}`);
                     console.log(`Alarm Range: (START: ${start} // END: ${end})`);
                     console.log('--------------------------------');
+                    if (tempEmailCount <= 5) {
+                        sendThresholdAlertEmail ('Temperatura', start, end, tempParsed);
+                        tempEmailCount += 1;
+                    }
+                } else {
+                    tempEmailCount = 0;
                 }
             }
 
